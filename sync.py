@@ -6,6 +6,7 @@ import sys,os.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pprint
+import copy
 
 from python.rdio import Rdio
 from rdio_consumer_credentials import RDIO_CREDENTIALS
@@ -52,11 +53,11 @@ rdio = Rdio(RDIO_CREDENTIALS, TOKEN)
 
 def fakeAlbums():
   albums = [];
-  albums.append({'name': 'Selling England by the Pound', 'artist': 'Genesis', 'offline': False})
-  albums.append({'name': 'Foxtrot', 'artist': 'Genesis', 'offline': False})
-  albums.append({'name': 'Word of Mouth', 'artist': 'The Kinks', 'offline': True})
-  albums.append({'name': 'Wish You Were Here', 'artist': 'Pink Floyd', 'offline': False})
-  albums.append({'name': 'Wishbone Ash', 'artist': 'Wishbone Ash', 'offline': True})
+  albums.append({'key': '1', 'name': 'Selling England by the Pound', 'artist': 'Genesis', 'offline': False})
+  albums.append({'key': '2', 'name': 'Foxtrot', 'artist': 'Genesis', 'offline': False})
+  albums.append({'key': '3', 'name': 'Word of Mouth', 'artist': 'The Kinks', 'offline': True})
+  albums.append({'key': '4', 'name': 'Wish You Were Here', 'artist': 'Pink Floyd', 'offline': False})
+  albums.append({'key': '5', 'name': 'Wishbone Ash', 'artist': 'Wishbone Ash', 'offline': True})
   return albums
 
 def fetchAllAlbums():
@@ -66,32 +67,32 @@ def fetchAllAlbums():
   c = 0
   while 1:
     print "Fetching Albums..."
-    resultList = rdio.call('getAlbumsInCollection', {'start': str(c), 'count': str(PAGE_SIZE)})['result']
+    resultList = rdio.call('getFavorites', {'types': 'tracksAndAlbums', 'start': str(c), 'count': str(PAGE_SIZE)})['result']
     if len(resultList) > 0:
       for result in resultList:
         c += 1
-        albums.append({'name': result['name'], 'artist': result['artist'], 'offline': False})
+        if result['type'] != 'a':
+          continue
+        result['offline'] = False
+        albums.append(result)
     else:
       break
 
-  offlineAlbums = []
   c = 0
   while 1:
     print "Fetching Offline Tracks..."
-    resultList = rdio.call('getOfflineTracks', {'start': str(c), 'count': str(PAGE_SIZE)})['result']
+    resultList = rdio.call('getSynced', {'type': 'tracksAndAlbums', 'start': str(c), 'count': str(PAGE_SIZE)})['result']
     if len(resultList) > 0:
       for result in resultList:
         c += 1
-        val = {'name': result['name'], 'artist': result['artist']};
-        if val not in offlineAlbums:
-          offlineAlbums.append(val)
+        if result['type'] != 'a':
+          continue
+        for album in albums:
+          if album['key'] == result['key']:
+            album['offline'] = True
     else:
       break
 
-  for album in albums:
-    for offlineAlbum in offlineAlbums:
-      if album['name'] == offlineAlbum['name'] and album['artist'] == offlineAlbum['artist']:
-        album['offline'] = True
   return albums
 
 class Sync:
@@ -100,6 +101,7 @@ class Sync:
   def __init__(self, rdio, albums):
     self.rdio = rdio
     self.albums = albums
+    self.oldAlbums = copy.deepcopy(albums)
     self.filterString = ''
     self.offset = 0
 
@@ -193,7 +195,36 @@ class Sync:
       print "Unrecognized Input.\n"
 
   def sync(self):
-    print 'Not Implemented yet.\n'
+    toAdd = []
+    toRemove = []
 
-sync = Sync(rdio, fakeAlbums())
+    # Creates the toAdd and toRemove list by intersecting oldAlbums with albums.
+    #
+    # Probably some clever way to do this with list comprehensions, functional programming
+    # or sets.
+    for album in self.albums:
+      for oldAlbum in self.oldAlbums:
+        if album['key'] == oldAlbum['key']:
+          if album['offline'] and not oldAlbum['offline']:
+            toAdd.append(album)
+          elif not album['offline'] and oldAlbum['offline']:
+            toRemove.append(album)
+
+    # Final prompt with summary.
+    input = raw_input('Adding {0} albums. Removing {1} albums. Ready to sync? [y/n] --> '.format(len(toAdd), len(toRemove)))
+    if (input.lower() != 'y' and input.lower() != 'yes'):
+      return
+
+    # Actually do the syncing.
+    print "Syncing..."
+    if len(toRemove) > 0:
+      print self.rdio.call('removeFromSynced', {'keys': ','.join([album['key'] for album in toRemove])})
+    if len(toAdd) > 0:
+      print self.rdio.call('addToSynced', {'keys': ','.join([album['key'] for album in toAdd])})
+
+    # Now albums is exactly oldAlbums to start the process all over agin.
+    self.oldAlbums = copy.deepcopy(self.albums)
+    print "Done."
+
+sync = Sync(rdio, fetchAllAlbums())
 sync.prompt()
