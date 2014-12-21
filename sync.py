@@ -52,33 +52,33 @@ rdio = Rdio(RDIO_CREDENTIALS, TOKEN)
 
 def fakeAlbums():
   albums = [];
-  albums.append({'name': 'Selling England by the Pound', 'artist': 'Genesis'})
-  albums.append({'name': 'Foxtrot', 'artist': 'Genesis'})
+  albums.append({'name': 'Selling England by the Pound', 'artist': 'Genesis', 'offline': False})
+  albums.append({'name': 'Foxtrot', 'artist': 'Genesis', 'offline': False})
   albums.append({'name': 'Word of Mouth', 'artist': 'The Kinks', 'offline': True})
-  albums.append({'name': 'Wish You Were Here', 'artist': 'Pink Floyd'})
+  albums.append({'name': 'Wish You Were Here', 'artist': 'Pink Floyd', 'offline': False})
   albums.append({'name': 'Wishbone Ash', 'artist': 'Wishbone Ash', 'offline': True})
   return albums
 
 def fetchAllAlbums():
+  PAGE_SIZE = 100
+
   albums = []
   c = 0
   while 1:
-    print c
-    resultList = rdio.call('getAlbumsInCollection', {'start': str(c), 'count': str(50)})['result']
-    print "Fetching: " + str(c) + " to " + str(c + 50)
+    print "Fetching Albums..."
+    resultList = rdio.call('getAlbumsInCollection', {'start': str(c), 'count': str(PAGE_SIZE)})['result']
     if len(resultList) > 0:
-      print "Found " + str(len(resultList)) + " results."
       for result in resultList:
         c += 1
-        albums.append({'name': result['name'], 'artist': result['artist']})
+        albums.append({'name': result['name'], 'artist': result['artist'], 'offline': False})
     else:
       break
 
   offlineAlbums = []
   c = 0
   while 1:
-    print c
-    resultList = rdio.call('getOfflineTracks', {'start': str(c), 'count': str(50)})['result']
+    print "Fetching Offline Tracks..."
+    resultList = rdio.call('getOfflineTracks', {'start': str(c), 'count': str(PAGE_SIZE)})['result']
     if len(resultList) > 0:
       for result in resultList:
         c += 1
@@ -89,73 +89,111 @@ def fetchAllAlbums():
       break
 
   for album in albums:
-    if album in offlineAlbums:
-      album['offline'] = True
+    for offlineAlbum in offlineAlbums:
+      if album['name'] == offlineAlbum['name'] and album['artist'] == offlineAlbum['artist']:
+        album['offline'] = True
   return albums
 
 class Sync:
+  MAX_ALBUMS = 50
+
   def __init__(self, rdio, albums):
     self.rdio = rdio
     self.albums = albums
+    self.filterString = ''
+    self.offset = 0
+
+  def getAlbumView(self):
+    filteredAlbums = self.albums
+    if self.filterString != '':
+      filteredAlbums = filter(lambda a: (self.filterString in a['name']) or (self.filterString in a['artist']), self.albums)
+    return filteredAlbums[self.offset:(Sync.MAX_ALBUMS + self.offset)]
+
+  def getTotalItemsWithFilter(self):
+    filteredAlbums = self.albums
+    if self.filterString != '':
+      filteredAlbums = filter(lambda a: (self.filterString in a['name']) or (self.filterString in a['artist']), self.albums)
+    return len(filteredAlbums)
 
   def prompt(self):
-    albumsSynced = 0
     selectChar = ' '
-    for idx, album in enumerate(self.albums):
-      if (('offline' in album) and album['offline']):
-        albumsSynced += 1
+    for idx, album in enumerate(self.getAlbumView()):
+      if album['offline']:
         selectChar = 'x'
       else:
         selectChar = ' '
-      print '{0}. [{1}] {2} - {3}'.format(str(idx), selectChar, album['name'], album['artist'])
-    print 'Albums Synced: {0}. Total Albums {1}.'.format(albumsSynced, len(self.albums))
-    self.handleInput(raw_input('Toggle Album. Or [\'next\', \'prev\', \'filter\', \'sort\', \'sync\'] --> '))
+      print '{0}. [{1}] {2} - {3}'.format(str(idx), selectChar, album['artist'], album['name'])
+
+    totalSynced = len(filter(lambda album: album['offline'], self.albums))
+    len(filter(lambda album: album['offline'], self.albums))
+    print 'Showing {0}-{1} of {2}. Albums Synced: {3}.'.format(
+      str(self.offset),
+      str(min(self.getTotalItemsWithFilter(), self.offset + Sync.MAX_ALBUMS)),
+      self.getTotalItemsWithFilter(),
+      totalSynced)
+    self.handleInput(raw_input('Toggle Album. Or [\'(a)ll\', \'(c)lear\', \'(n)ext\', \'(p)rev\', \'(f)ilter\', \'(s)ort\', \'sync\'] --> '))
 
   def handleInput(self, input):
     if input == 'q':
       quit()
-    elif input == 'sort':
+    elif input == 'sort' or input == 's':
       self.sort()
     elif input == 'sync':
       self.sync()
-    elif input == 'filter':
+    elif input == 'filter' or input == 'f':
       self.filter()
-    elif input == 'next':
+    elif input == 'next' or input == 'n':
       self.next()
-    elif input == 'prev':
-      self.next()
+    elif input == 'prev' or input == 'p':
+      self.prev()
+    elif input == 'clear' or input == 'c':
+      for album in self.getAlbumView():
+        album['offline'] = False
+    elif input == 'all' or input == 'a':
+      for album in self.getAlbumView():
+        album['offline'] = True
     elif input.isdigit():
       # Toggle selected album.
       idx = int(input)
-      album = self.albums[idx]
+      album = self.getAlbumView()[idx]
       isOffline = False
       if ('offline' in album) and album['offline']:
         isOffline = True
       album['offline'] = not isOffline
     else:
-      print "Unrecognized Input."
+      print "Unrecognized Input.\n"
     self.prompt()
 
   def filter(self):
-    print "Not implemented yet."
+    # Reset offset
+    self.offset = 0
+    input = raw_input('Enter filter string --> ')
+    self.filterString = input
 
   def next(self):
-    print "Not implemented yet."
+    self.offset += Sync.MAX_ALBUMS
+    if self.offset > self.getTotalItemsWithFilter():
+      self.offset -= Sync.MAX_ALBUMS
 
   def prev(self):
-    print "Not implemented yet."
+    self.offset -= Sync.MAX_ALBUMS
+    if self.offset < 0:
+      self.offset = 0
 
   def sort(self):
+    # Reset offset and filterString
+    self.offset = 0
+    self.filterString = ''
     input = raw_input('[album, artist] --> ')
     if input == 'artist':
       self.albums = sorted(self.albums, key=lambda album: album['artist'])
     elif input == 'album':
       self.albums = sorted(self.albums, key=lambda album: album['name'])
     else:
-      print "Unrecognized Input."
+      print "Unrecognized Input.\n"
 
   def sync(self):
-    print 'TODO(kjleftin): Implement.'
+    print 'Not Implemented yet.\n'
 
 sync = Sync(rdio, fakeAlbums())
 sync.prompt()
